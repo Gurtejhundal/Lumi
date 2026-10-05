@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#08090c" />
+    <title>Nox Island</title>
+  </head>
+  <body>
+    <main class="prototype-shell" aria-label="Nox Island visual prototype">
+      <div class="backdrop-orb backdrop-orb--left"></div>
+      <div class="backdrop-orb backdrop-orb--right"></div>
+
+      <section
+        id="island"
+        class="island is-compact"
+        data-surface="compact"
+        data-event="idle"
+        aria-live="polite"
+      >
+        <button
+          id="islandSensor"
+          class="island-sensor"
+          aria-label="Reveal Nox Island"
+        ></button>
+
+        <div class="island-surface">
+          <div class="surface-shine"></div>
+          <button
+            id="noxStage"
+            class="nox-stage"
+            aria-label="Nox. Click three times to make Nox dizzy."
+          >
+            <canvas id="noxCanvas" aria-hidden="true"></canvas>
+          </button>
+
+          <div class="island-content">
+            <img
+              id="artwork"
+              class="artwork"
+              alt="Current album artwork"
+              hidden
+            />
+            <p id="eyebrow" class="eyebrow">Nox</p>
+            <p id="headline" class="headline">Ready when you are</p>
+            <p id="detail" class="detail">A quiet companion at the top edge</p>
+
+            <div id="activity" class="activity" hidden>
+              <span class="activity-dot" aria-hidden="true"></span>
+              <span id="activityText">Waiting for the next event</span>
+            </div>
+
+            <article id="fileCard" class="file-card" hidden>
+              <span class="file-icon" aria-hidden="true">⌁</span>
+              <span class="file-meta">
+                <strong id="fileName">prototype-notes.md</strong>
+                <span id="fileInfo">Markdown · 24 KB</span>
+              </span>
+            </article>
+
+            <div id="fileActions" class="file-actions" hidden>
+              <button data-file-action="copy_path" type="button">
+                Copy path
+              </button>
+              <button data-file-action="open_containing_folder" type="button">
+                Show folder
+              </button>
+              <button data-file-action="attach" type="button">Attach</button>
+              <button data-file-action="inspect" type="button">Inspect</button>
+              <button data-file-action="summarize" type="button">
+                Summarize
+              </button>
+            </div>
+            <p id="fileActionStatus" class="action-status" hidden></p>
+
+            <div id="permissionActions" class="permission-actions" hidden>
+              <button
+                id="denyButton"
+                class="action-button action-button--quiet"
+                type="button"
+              >
+                Deny
+              </button>
+              <button
+                id="allowButton"
+                class="action-button action-button--allow"
+                type="button"
+              >
+                Allow
+              </button>
+            </div>
+
+            <div
+              id="mediaActions"
+              class="media-actions"
+              hidden
+              aria-label="Media controls"
+            >
+              <button
+                data-media-command="previous"
+                type="button"
+                aria-label="Previous track"
+              >
+                ‹
+              </button>
+              <button
+                data-media-command="play_pause"
+                type="button"
+                aria-label="Play or pause"
+              >
+                Ⅱ
+              </button>
+              <button
+                data-media-command="next"
+                type="button"
+                aria-label="Next track"
+              >
+                ›
+              </button>
+            </div>
+
+            <form id="assistantForm" class="assistant-form" hidden>
+              <label for="assistantPrompt"
+                >Ask through your local Codex bridge</label
+              >
+              <div class="assistant-input-row">
+                <input
+                  id="assistantPrompt"
+                  maxlength="1000"
+                  placeholder="Ask about the active task…"
+                  autocomplete="off"
+                />
+                <button
+                  class="action-button action-button--allow"
+                  type="submit"
+                >
+                  Send
+                </button>
+              </div>
+              <output
+                id="assistantResult"
+                class="assistant-result"
+                hidden
+              ></output>
+            </form>
+
+            <section id="settingsPanel" class="settings-panel" hidden>
+              <label>
+                Provider
+                <select id="assistantProvider">
+                  <option value="codex_bridge">Codex local bridge</option>
+                  <option value="disabled">Disabled</option>
+                </select>
+              </label>
+              <label class="settings-check">
+                <input id="autostart" type="checkbox" />
+                Start Nox Island when you sign in
+              </label>
+              <div class="gesture-guide" aria-label="Island gesture controls">
+                <strong>Island controls</strong>
+                <span
+                  >Tap: assistant · double-click: media · hold:
+                  preferences</span
+                >
+                <span
+                  >Swipe ←: media · →: preferences · ↑: assistant · ↓:
+                  hide</span
+                >
+                <span>2 touches: media · 3: system · 4: preferences</span>
+              </div>
+              <p>No provider key is saved by Nox Island.</p>
+            </section>
+          </div>
+
+          <div id="sparkles" class="sparkles" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <section class="demo-console" aria-label="Nox Island developer demo">
+        <div class="console-heading">
+          <span>Phases 1–8 · release review</span>
+          <label class="motion-toggle">
+            <input id="reducedMotion" type="checkbox" />
+            <span>Reduce motion</span>
+          </label>
+        </div>
+        <div class="demo-actions" role="group" aria-label="Demo states">
+          <button data-demo="hidden" type="button">Hidden</button>
+          <button data-demo="peek" type="button">Peek</button>
+          <button data-demo="idle" type="button">Idle</button>
+          <button data-demo="thinking" type="button">Thinking</button>
+          <button data-demo="editing" type="button">Editing</button>
+          <button data-demo="running" type="button">Running</button>
+          <button data-demo="permission" type="button">Permission</button>
+          <button data-demo="success" type="button">Success</button>
+          <button data-demo="failure" type="button">Failure</button>
+          <button data-demo="media" type="button">Media</button>
+          <button data-demo="volume" type="button">Volume</button>
+          <button data-demo="brightness" type="button">Brightness</button>
+          <button data-demo="bluetooth" type="button">Bluetooth</button>
+          <button data-demo="battery" type="button">Battery</button>
+          <button data-demo="file" type="button">File drop</button>
+          <button data-demo="notification" type="button">Notification</button>
+          <button data-demo="assistant" type="button">Assistant</button>
+          <button data-demo="settings" type="button">Settings</button>
+        </div>
+        <p class="console-note">
+          Hover the top edge to reveal Nox. Click Nox for a squash; triple-click
+          for dizzy.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

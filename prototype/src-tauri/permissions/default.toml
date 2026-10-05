@@ -1,0 +1,23 @@
+[[permission]]
+identifier = "allow-set-overlay-interaction"
+description = "Allows the frontend to change whole-window cursor passthrough."
+commands.allow = ["set_overlay_interaction"]
+
+[[permission]]
+identifier = "allow-overlay-capabilities"
+description = "Allows the frontend to read the active overlay capability boundary."
+commands.allow = ["overlay_capabilities"]
+
+[[permission]]
+identifier = "allow-resolve-codex-permission"
+description = "Allows resolving a pending local Codex permission by request ID."
+commands.allow = ["resolve_codex_permission"]
+
+[[permission]]
+identifier = "allow-media-command"
+description = "Allows direct MPRIS playback commands for the selected local player."
+commands.allow = ["media_command"]
+
+[default]
+description = "Default permissions for the Nox Island frontend."
+permissions = ["allow-set-overlay-interaction", "allow-overlay-capabilities", "allow-resolve-codex-permission", "allow-media-command"]

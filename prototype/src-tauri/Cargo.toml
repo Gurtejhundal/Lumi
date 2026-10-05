@@ -1,0 +1,26 @@
+[package]
+name = "nox-island"
+version = "0.8.0"
+description = "A top-edge companion for GNOME"
+authors = ["Nox Island"]
+edition = "2021"
+
+[lib]
+name = "nox_island_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.0", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
+tauri = { version = "2.12.1", features = [] }
+tauri-plugin-autostart = "2.7.0"
+tokio = { version = "1", features = ["fs", "io-util", "net", "sync"] }
+zbus = { version = "5.19.0", features = ["tokio"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

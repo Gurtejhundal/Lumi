@@ -1,7 +1,12 @@
 [[permission]]
 identifier = "allow-set-overlay-interaction"
-description = "Allows the frontend to change whole-window cursor passthrough."
+description = "Allows the frontend to change whole-window cursor passthrough and focusability."
 commands.allow = ["set_overlay_interaction"]
+
+[[permission]]
+identifier = "allow-set-overlay-surface"
+description = "Allows the frontend to resize the native backing window to the visible island surface."
+commands.allow = ["set_overlay_surface"]
 
 [[permission]]
 identifier = "allow-overlay-capabilities"
@@ -20,4 +25,4 @@ commands.allow = ["media_command"]
 
 [default]
 description = "Default permissions for the Nox Island frontend."
-permissions = ["allow-set-overlay-interaction", "allow-overlay-capabilities", "allow-resolve-codex-permission", "allow-media-command"]
+permissions = ["allow-set-overlay-interaction", "allow-set-overlay-surface", "allow-overlay-capabilities", "allow-resolve-codex-permission", "allow-media-command"]

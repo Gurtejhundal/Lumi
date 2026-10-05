@@ -1,13 +1,31 @@
 import type { NoxEmotion } from "./state-machine";
 
+export type NoxTrigger =
+  | "press"
+  | "release"
+  | "annoyed"
+  | "dizzy"
+  | "success"
+  | "failure"
+  | "fileCatch"
+  | "attention";
+
 export interface NoxRendererOptions {
   reducedMotion: boolean;
   emotion: NoxEmotion;
   activity: boolean;
   visible: boolean;
-  celebrate: boolean;
-  fail: boolean;
-  fileDrop: boolean;
+}
+
+export interface NoxMotionSample {
+  squash: number;
+  hop: number;
+  drop: number;
+  wingBoost: number;
+  fileCatch: number;
+  dizzy: number;
+  annoyed: number;
+  attention: number;
 }
 
 interface Pointer {
@@ -19,26 +37,105 @@ interface Pointer {
 const clamp = (value: number, low: number, high: number) =>
   Math.max(low, Math.min(high, value));
 
+const eased = (value: number) => 1 - Math.pow(1 - clamp(value, 0, 1), 3);
+
+/** One-shot character impulses. None of these values are persistent states. */
+export class NoxMotion {
+  private last = 0;
+  private squash = 0;
+  private squashVelocity = 0;
+  private pressed = false;
+  private dizzyUntil = 0;
+  private annoyedUntil = 0;
+  private successAt = -1;
+  private failureAt = -1;
+  private fileCatchAt = -1;
+  private attentionUntil = 0;
+
+  public trigger(trigger: NoxTrigger, now = performance.now()): boolean {
+    switch (trigger) {
+      case "press":
+        this.pressed = true;
+        return true;
+      case "release":
+        this.pressed = false;
+        this.annoyedUntil = now + 560;
+        return true;
+      case "annoyed":
+        this.annoyedUntil = now + 560;
+        return true;
+      case "dizzy":
+        if (now < this.dizzyUntil) return false;
+        this.dizzyUntil = now + 2100;
+        return true;
+      case "success":
+        this.successAt = now;
+        return true;
+      case "failure":
+        this.failureAt = now;
+        return true;
+      case "fileCatch":
+        this.fileCatchAt = now;
+        return true;
+      case "attention":
+        this.attentionUntil = now + 480;
+        return true;
+    }
+  }
+
+  public sample(now: number): NoxMotionSample {
+    const dt = Math.min(0.034, Math.max(0.001, (now - this.last || 16) / 1000));
+    this.last = now;
+    const target = this.pressed ? 1 : 0;
+    this.squashVelocity += (target - this.squash) * 205 * dt;
+    this.squashVelocity *= Math.exp(-15 * dt);
+    this.squash += this.squashVelocity * dt;
+
+    const successAge = this.successAt < 0 ? Infinity : now - this.successAt;
+    const failureAge = this.failureAt < 0 ? Infinity : now - this.failureAt;
+    const fileAge = this.fileCatchAt < 0 ? Infinity : now - this.fileCatchAt;
+    const success = successAge < 1100 ? successAge / 1100 : -1;
+    const preHop = success >= 0 && success < 0.18 ? eased(success / 0.18) : 0;
+    const hop =
+      success >= 0.13 && success < 0.64
+        ? Math.sin(((success - 0.13) / 0.51) * Math.PI) * 7.2
+        : 0;
+    const failure =
+      failureAge < 510 ? Math.sin((failureAge / 510) * Math.PI) * 2.8 : 0;
+    const catchProgress =
+      fileAge < 820 ? Math.sin((fileAge / 820) * Math.PI) : 0;
+
+    return {
+      squash: clamp(this.squash + preHop * 0.7, -0.2, 1.15),
+      hop,
+      drop: failure,
+      wingBoost: success >= 0 && success < 0.76 ? 0.5 : 0,
+      fileCatch: catchProgress,
+      dizzy: now < this.dizzyUntil ? (this.dizzyUntil - now) / 2100 : 0,
+      annoyed: now < this.annoyedUntil ? (this.annoyedUntil - now) / 560 : 0,
+      attention:
+        now < this.attentionUntil ? (this.attentionUntil - now) / 480 : 0,
+    };
+  }
+}
+
 export class NoxRenderer {
   private readonly context: CanvasRenderingContext2D;
   private readonly resizeObserver: ResizeObserver;
+  private readonly motion = new NoxMotion();
   private frame = 0;
   private last = 0;
   private nextBlink = 0;
   private blinkStart = -1;
   private doubleBlink = false;
-  private squish = 0;
-  private dizzyUntil = 0;
   private gaze = { x: 0, y: 0 };
   private pointer: Pointer = { x: 0, y: 0, active: false };
+  private pointerSince = 0;
   private options: NoxRendererOptions = {
     reducedMotion: false,
     emotion: "neutral",
     activity: false,
     visible: true,
-    celebrate: false,
-    fail: false,
-    fileDrop: false,
   };
 
   public constructor(private readonly canvas: HTMLCanvasElement) {
@@ -57,14 +154,17 @@ export class NoxRenderer {
   }
 
   public setPointer(x: number, y: number, active: boolean): void {
+    if (active && !this.pointer.active) {
+      this.pointerSince = performance.now();
+      this.motion.trigger("attention", this.pointerSince);
+    }
     this.pointer = { x, y, active };
   }
 
-  public reactToClick(tripleClick: boolean): void {
-    const now = performance.now();
-    this.squish = 1;
-    if (tripleClick && now >= this.dizzyUntil) this.dizzyUntil = now + 2100;
-    this.start();
+  public trigger(trigger: NoxTrigger): boolean {
+    const accepted = this.motion.trigger(trigger);
+    if (accepted) this.start();
+    return accepted;
   }
 
   public destroy(): void {
@@ -81,8 +181,9 @@ export class NoxRenderer {
   }
 
   private start(): void {
-    if (!this.frame && this.options.visible)
+    if (!this.frame && this.options.visible) {
       this.frame = requestAnimationFrame((now) => this.render(now));
+    }
   }
 
   private stop(): void {
@@ -103,45 +204,47 @@ export class NoxRenderer {
     const close = 54;
     const hold = 28;
     const open = 98;
-    const total = close + hold + open;
-    const phase = elapsed % total;
-    const eye =
-      phase < close
-        ? 1 - phase / close
-        : phase < close + hold
-          ? 0.04
-          : (phase - close - hold) / open;
-    const complete =
-      total * (this.doubleBlink ? 2 : 1) + (this.doubleBlink ? 70 : 0);
-    if (elapsed >= complete) {
+    const first = close + hold + open;
+    const gap = 70;
+    const secondStart = first + gap;
+    const total = this.doubleBlink ? secondStart + first : first;
+    if (elapsed >= total) {
       this.blinkStart = -1;
       this.nextBlink = now + 4500 + Math.random() * 4000;
       return 1;
     }
-    if (this.doubleBlink && elapsed > total && elapsed < total + 70) return 1;
-    return clamp(eye, 0.04, 1);
+    if (this.doubleBlink && elapsed >= first && elapsed < secondStart) return 1;
+    const local =
+      this.doubleBlink && elapsed >= secondStart
+        ? elapsed - secondStart
+        : elapsed;
+    if (local < close) return clamp(1 - local / close, 0.04, 1);
+    if (local < close + hold) return 0.04;
+    return clamp((local - close - hold) / open, 0.04, 1);
   }
 
   private mantaPath(
     cx: number,
     cy: number,
     scale: number,
-    wingLift: number,
+    leftWingLift: number,
+    rightWingLift: number,
     tailCurl: number,
     breath: number,
   ): Path2D {
     const width = 36 * scale * (1 + breath * 0.018);
     const height = 16.5 * scale * (1 + breath * 0.026);
-    const lift = 7 * scale * wingLift;
+    const leftLift = 7 * scale * leftWingLift;
+    const rightLift = 7 * scale * rightWingLift;
     const path = new Path2D();
     path.moveTo(cx, cy - height * 0.94);
     path.bezierCurveTo(
       cx - width * 0.18,
       cy - height * 1.19,
       cx - width * 0.67,
-      cy - height * 0.88 - lift,
+      cy - height * 0.88 - leftLift,
       cx - width,
-      cy - height * 0.1 - lift,
+      cy - height * 0.1 - leftLift,
     );
     path.bezierCurveTo(
       cx - width * 0.81,
@@ -173,11 +276,11 @@ export class NoxRenderer {
       cx + width * 0.81,
       cy + height * 0.36,
       cx + width,
-      cy - height * 0.1 - lift,
+      cy - height * 0.1 - rightLift,
     );
     path.bezierCurveTo(
       cx + width * 0.67,
-      cy - height * 0.88 - lift,
+      cy - height * 0.88 - rightLift,
       cx + width * 0.18,
       cy - height * 1.19,
       cx,
@@ -248,37 +351,34 @@ export class NoxRenderer {
 
     const reduced = this.options.reducedMotion;
     const wave = reduced ? 0 : now;
+    const motion = this.motion.sample(now);
     const breath = (1 - Math.cos((wave / 3560) * Math.PI * 2)) * 0.5;
     const driftX = reduced
       ? 0
       : Math.sin(wave / 1900) * 1.1 + Math.sin(wave / 3130) * 0.6;
     const driftY = reduced ? 0 : Math.sin(wave / 2410) * 0.8;
-    const dizzy = !reduced && now < this.dizzyUntil;
-    const celebrationAge = this.options.celebrate
-      ? Math.min(1, (now % 1250) / 720)
-      : 0;
-    const failDrop = this.options.fail ? 2.6 : 0;
     const baseScale = Math.min(width / 104, height / 61);
     const mood = this.options.emotion;
-    const targetSquish = this.squish;
-    this.squish *= Math.pow(0.006, dt / 1000);
+    const hoverAge = this.pointer.active ? now - this.pointerSince : 0;
+    const hoverLean = hoverAge > 50 ? clamp((hoverAge - 50) / 240, 0, 1) : 0;
 
-    let wingLift = this.pointer.active ? 0.48 : 0.16;
-    if (this.options.activity) wingLift += Math.sin(wave / 760) * 0.1;
-    if (mood === "pleased") wingLift = 0.78;
-    if (mood === "worried" || mood === "sleepy") wingLift = -0.08;
-    if (this.options.fileDrop) wingLift = 0.92;
-    const wobbleDecay = dizzy ? (this.dizzyUntil - now) / 2100 : 0;
-    const wobble = dizzy ? Math.sin(wave / 49) * 0.16 * wobbleDecay : 0;
-    const tailCurl = dizzy
-      ? Math.sin(wave / 93) * wobbleDecay
-      : this.options.fileDrop
-        ? 0.42
-        : 0;
-    const hop =
-      mood === "pleased" && !reduced
-        ? Math.sin(celebrationAge * Math.PI) * 7
-        : 0;
+    let leftWing = this.pointer.active ? 0.36 + hoverLean * 0.24 : 0.16;
+    let rightWing = this.pointer.active ? 0.27 + hoverLean * 0.1 : 0.16;
+    if (this.options.activity) {
+      const activityLift = Math.sin(wave / 760) * 0.1;
+      leftWing += activityLift;
+      rightWing += activityLift;
+    }
+    if (mood === "pleased") leftWing = rightWing = 0.78;
+    if (mood === "worried" || mood === "sleepy") leftWing = rightWing = -0.08;
+    leftWing += motion.wingBoost + motion.fileCatch * 0.35;
+    rightWing +=
+      motion.wingBoost + motion.fileCatch * 0.2 + motion.attention * 0.1;
+    leftWing -= motion.annoyed * 0.22;
+    const wobble = motion.dizzy ? Math.sin(wave / 49) * 0.16 * motion.dizzy : 0;
+    const tailCurl = motion.dizzy
+      ? Math.sin(wave / 93) * motion.dizzy
+      : motion.fileCatch * 0.42;
 
     const canvasBounds = this.canvas.getBoundingClientRect();
     const targetX = this.pointer.active
@@ -300,12 +400,26 @@ export class NoxRenderer {
     this.gaze.y += (targetY - this.gaze.y) * blend;
 
     ctx.save();
-    ctx.translate(width / 2 + driftX, height / 2 + 2 + driftY + failDrop - hop);
-    ctx.rotate(
-      wobble + (mood === "working" ? Math.sin(wave / 1260) * 0.025 : 0),
+    ctx.translate(
+      width / 2 + driftX,
+      height / 2 + 2 + driftY + motion.drop - motion.hop,
     );
-    ctx.scale(1 + targetSquish * 0.11, 1 - targetSquish * 0.17);
-    const body = this.mantaPath(0, 0, baseScale, wingLift, tailCurl, breath);
+    ctx.rotate(
+      wobble +
+        hoverLean * this.gaze.x * 0.018 +
+        motion.annoyed * 0.052 +
+        (mood === "working" ? Math.sin(wave / 1260) * 0.025 : 0),
+    );
+    ctx.scale(1 + motion.squash * 0.11, 1 - motion.squash * 0.17);
+    const body = this.mantaPath(
+      0,
+      0,
+      baseScale,
+      leftWing,
+      rightWing,
+      tailCurl,
+      breath,
+    );
     const fill = ctx.createLinearGradient(
       0,
       -26 * baseScale,
@@ -348,7 +462,7 @@ export class NoxRenderer {
     ctx.stroke();
     ctx.restore();
 
-    let openness = this.blink(now);
+    let openness = this.blink(now) + (hoverAge > 50 ? 0.08 * hoverLean : 0);
     let leftSlant = 0.03;
     let rightSlant = -0.03;
     if (mood === "curious") {
@@ -367,14 +481,14 @@ export class NoxRenderer {
       rightSlant = -0.14;
     }
     if (mood === "sleepy") openness = Math.min(openness, 0.46);
-    if (targetSquish > 0.08) {
-      leftSlant = -0.23;
-      rightSlant = 0.17;
+    if (motion.annoyed > 0) {
+      leftSlant = -0.28;
+      rightSlant = 0.12;
     }
     const eyeX = 10.7 * baseScale;
     const eyeY = -4.2 * baseScale;
-    const orbitX = dizzy ? Math.cos(wave / 126) * 2.4 : this.gaze.x;
-    const orbitY = dizzy ? Math.sin(wave / 126) * 1.4 : this.gaze.y;
+    const orbitX = motion.dizzy ? Math.cos(wave / 126) * 2.4 : this.gaze.x;
+    const orbitY = motion.dizzy ? Math.sin(wave / 126) * 1.4 : this.gaze.y;
     const alpha = mood === "sleepy" ? 0.62 : 1;
     this.eye(
       -eyeX,
@@ -392,12 +506,11 @@ export class NoxRenderer {
       12.4 * baseScale,
       openness,
       rightSlant,
-      dizzy ? -orbitX : this.gaze.x,
-      dizzy ? -orbitY : this.gaze.y,
+      motion.dizzy ? -orbitX : this.gaze.x,
+      motion.dizzy ? -orbitY : this.gaze.y,
       alpha,
     );
     ctx.restore();
-
     this.start();
   }
 }

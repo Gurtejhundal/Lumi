@@ -9,10 +9,22 @@ import {
   resolveCodexPermission,
   sendMediaCommand,
   setAutostart,
+  setNativeInteraction,
+  setNativeSurface,
   subscribeRuntimeEvents,
   subscribeWindowFileDrops,
 } from "./desktop";
 import { NoxRenderer } from "./nox";
+import {
+  GestureController,
+  type Gesture,
+  type GestureTarget,
+} from "./interaction/gesture-controller";
+import {
+  InteractionArbiter,
+  type InteractionPriorityName,
+  priorityForRuntimeEvent,
+} from "./interaction/interaction-arbiter";
 import {
   canDismiss,
   modelForDemo,
@@ -59,16 +71,7 @@ const reducedMotion = required<HTMLInputElement>("#reducedMotion");
 const renderer = new NoxRenderer(canvas);
 let model = modelForDemo("idle");
 let hoverTimer = 0;
-let clickTimes: number[] = [];
-let clickTimer = 0;
-let holdTimer = 0;
-let holdHandled = false;
-let lastTouchInteraction = 0;
-const activeTouches = new Map<
-  number,
-  { x: number; y: number; startedAt: number }
->();
-let touchPeak = 0;
+let collapseTimer = 0;
 let isReducedMotion = window.matchMedia(
   "(prefers-reduced-motion: reduce)",
 ).matches;
@@ -113,7 +116,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function applyModel(next: IslandModel): void {
+function applyModelDirect(next: IslandModel): void {
+  const previous = model;
   model = next;
   island.dataset.surface = next.surface;
   island.dataset.event = next.event;
@@ -141,16 +145,79 @@ function applyModel(next: IslandModel): void {
     visible: next.surface !== "hidden" && next.surface !== "peek",
     emotion: next.emotion,
     activity: Boolean(next.activity),
-    celebrate: next.event === "success" || next.event === "file",
-    fail: next.event === "failure",
-    fileDrop: next.event === "file",
     reducedMotion: isReducedMotion,
   });
+  if (next.event !== previous.event) {
+    if (next.event === "success") renderer.trigger("success");
+    if (next.event === "failure") renderer.trigger("failure");
+    if (next.event === "file") renderer.trigger("fileCatch");
+  }
+  if (isTauriDesktop) {
+    const focusable = Boolean(next.showAssistant || next.showSettings);
+    const interactive = next.surface !== "hidden" && next.surface !== "peek";
+    void setNativeSurface(next.surface);
+    void setNativeInteraction(interactive, focusable);
+    if (next.showAssistant) window.setTimeout(() => assistantPrompt.focus(), 0);
+  }
+}
+
+const arbiter = new InteractionArbiter({ apply: applyModelDirect });
+
+function requestModel(
+  next: IslandModel,
+  priority: InteractionPriorityName = "idle",
+  id: string = next.event,
+): void {
+  arbiter.dispatch({
+    id,
+    model: next,
+    priority,
+    locks:
+      priority === "permission" ||
+      priority === "privacy" ||
+      priority === "fileDrop" ||
+      priority === "failure",
+    expiresAfterMs:
+      priority === "systemHud" || priority === "media" ? 1200 : undefined,
+  });
+}
+
+function priorityForDemoEvent(
+  event: DemoEvent | "hidden" | "peek",
+): InteractionPriorityName {
+  switch (event) {
+    case "permission":
+      return "permission";
+    case "file":
+      return "fileDrop";
+    case "failure":
+      return "failure";
+    case "thinking":
+    case "editing":
+    case "running":
+    case "assistant":
+    case "settings":
+    case "home":
+      return "activeAgent";
+    case "media":
+      return "media";
+    case "volume":
+    case "brightness":
+    case "bluetooth":
+    case "battery":
+      return "systemHud";
+    default:
+      return "idle";
+  }
 }
 
 function show(event: DemoEvent | "hidden" | "peek"): void {
   window.clearTimeout(hoverTimer);
-  applyModel(modelForDemo(event));
+  requestModel(
+    modelForDemo(event),
+    priorityForDemoEvent(event),
+    `demo-${event}`,
+  );
 }
 
 function revealFromEdge(): void {
@@ -175,7 +242,7 @@ function updateFileCard(): void {
   fileInfo.textContent = `${activeFile.type} · ${formatBytes(activeFile.size)}`;
   fileActions.hidden = false;
   fileActionStatus.hidden = true;
-  model = { ...model, showFileActions: true };
+  requestModel({ ...model, showFileActions: true }, "fileDrop", "active-file");
 }
 
 function setFileActionStatus(message: string): void {
@@ -212,155 +279,131 @@ sensor.addEventListener("focus", revealFromEdge);
 island.addEventListener("mouseenter", () => {
   renderer.setPointer(0, 0, true);
   if (model.surface === "hidden") revealFromEdge();
+  if (model.surface === "petit") {
+    window.clearTimeout(hoverTimer);
+    hoverTimer = window.setTimeout(() => show("home"), 180);
+  }
 });
 island.addEventListener("mouseleave", () => {
   renderer.setPointer(0, 0, false);
+  window.clearTimeout(hoverTimer);
   if (model.surface === "peek") show("hidden");
+  if (model.surface === "compact" && !model.showPermission) {
+    window.clearTimeout(collapseTimer);
+    collapseTimer = window.setTimeout(() => show("idle"), 720);
+  }
 });
 
-window.addEventListener("pointermove", (event) => {
+island.addEventListener("pointermove", (event) => {
   const bounds = island.getBoundingClientRect();
-  const nearby =
-    event.clientY < Math.max(112, bounds.bottom + 42) &&
-    Math.abs(event.clientX - (bounds.left + bounds.width / 2)) < 250;
   renderer.setPointer(
     event.clientX,
     event.clientY,
-    nearby && model.surface !== "hidden" && model.surface !== "peek",
+    event.clientX >= bounds.left &&
+      event.clientX <= bounds.right &&
+      event.clientY >= bounds.top &&
+      event.clientY <= bounds.bottom &&
+      model.surface !== "hidden" &&
+      model.surface !== "peek",
   );
 });
 
-function runIslandGesture(
-  gesture: "assistant" | "media" | "settings" | "system" | "hide",
-): void {
-  if (gesture === "hide") {
-    show("hidden");
-    return;
-  }
-  if (gesture === "system") {
-    show("volume");
-    return;
-  }
-  show(gesture);
-}
-
-function queueStageClick(): void {
-  const now = performance.now();
-  clickTimes = clickTimes.filter((time) => now - time < 650);
-  clickTimes.push(now);
-  window.clearTimeout(clickTimer);
-  clickTimer = window.setTimeout(() => {
-    if (clickTimes.length >= 3) {
-      renderer.reactToClick(true);
-    } else if (clickTimes.length === 2) {
-      runIslandGesture("media");
-    } else {
-      runIslandGesture("assistant");
-    }
-    clickTimes = [];
-  }, 300);
-}
-
-function clearHold(): void {
-  window.clearTimeout(holdTimer);
-  holdTimer = 0;
-}
-
-function targetIsControl(target: EventTarget | null): boolean {
-  if (target instanceof Node && stage.contains(target)) return false;
-  return (
+function gestureTarget(target: EventTarget | null): GestureTarget {
+  if (target instanceof Node && stage.contains(target)) return "nox";
+  if (
     target instanceof Element &&
-    Boolean(target.closest("button, input, select, form"))
+    target.closest("button, input, select, form, [contenteditable='true']")
+  ) {
+    return "control";
+  }
+  return target instanceof Node && islandSurface.contains(target)
+    ? "island"
+    : "background";
+}
+
+function expandContext(): void {
+  if (model.surface === "petit") {
+    show("home");
+    return;
+  }
+  requestModel(
+    {
+      ...model,
+      surface: "expanded",
+      showMediaControls: model.event === "media",
+    },
+    "activeAgent",
+    "user-expand",
   );
 }
 
-stage.addEventListener("pointerdown", (event) => {
-  holdHandled = false;
-  clearHold();
-  holdTimer = window.setTimeout(() => {
-    holdHandled = true;
-    clickTimes = [];
-    runIslandGesture("settings");
-  }, 560);
-  stage.setPointerCapture?.(event.pointerId);
-});
-
-stage.addEventListener("pointerup", clearHold);
-stage.addEventListener("pointercancel", clearHold);
-stage.addEventListener("click", () => {
-  if (holdHandled || performance.now() - lastTouchInteraction < 450) return;
-  renderer.reactToClick(false);
-  queueStageClick();
-});
-
-islandSurface.addEventListener("click", (event) => {
-  if (event.target instanceof Node && stage.contains(event.target)) return;
-  if (targetIsControl(event.target)) return;
-  if (performance.now() - lastTouchInteraction < 450) return;
-  runIslandGesture("assistant");
-});
-
-island.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-  runIslandGesture("settings");
-});
-
-island.addEventListener("wheel", (event) => {
-  if (Math.abs(event.deltaY) < 3) return;
-  event.preventDefault();
-  runIslandGesture("system");
-});
-
-island.addEventListener("pointerdown", (event) => {
-  if (event.pointerType !== "touch" || targetIsControl(event.target)) return;
-  activeTouches.set(event.pointerId, {
-    x: event.clientX,
-    y: event.clientY,
-    startedAt: performance.now(),
-  });
-  touchPeak = Math.max(touchPeak, activeTouches.size);
-  if (activeTouches.size === 1) {
-    clearHold();
-    holdHandled = false;
-    holdTimer = window.setTimeout(() => {
-      holdHandled = true;
-      runIslandGesture("settings");
-    }, 560);
+function handleGesture(gesture: Gesture): void {
+  switch (gesture.kind) {
+    case "tap":
+      if (gesture.target === "nox") {
+        if (gesture.touchCount === 2 && model.event === "media") {
+          expandContext();
+        } else if (model.surface === "petit") {
+          show("home");
+        } else {
+          renderer.trigger("attention");
+        }
+      } else if (gesture.target === "island") {
+        if (model.surface === "compact") expandContext();
+        else if (model.surface === "expanded") {
+          requestModel(
+            { ...model, surface: "compact" },
+            "activeAgent",
+            "user-collapse",
+          );
+        }
+      }
+      return;
+    case "doubleTap":
+      if (gesture.target === "nox") {
+        renderer.trigger("annoyed");
+        if (model.event === "media") expandContext();
+      }
+      return;
+    case "tripleTap":
+      if (gesture.target === "nox") renderer.trigger("dizzy");
+      return;
+    case "longPress":
+      if (gesture.target === "nox" || gesture.target === "island")
+        show("settings");
+      return;
+    case "secondaryTap":
+      if (gesture.target !== "control") show("settings");
+      return;
+    case "swipe":
+      if (gesture.direction === "up") {
+        expandContext();
+      } else if (gesture.direction === "down") {
+        show("idle");
+      } else if (model.event === "media") {
+        void sendMediaCommand(
+          gesture.direction === "left" ? "previous" : "next",
+        );
+      } else {
+        renderer.trigger("annoyed");
+      }
+      return;
+    case "wheelIntent":
+      // Wheel input has no global meaning. Context-specific controls consume it.
+      return;
   }
-});
+}
 
-island.addEventListener("pointerup", (event) => {
-  const touch = activeTouches.get(event.pointerId);
-  if (!touch) return;
-  activeTouches.delete(event.pointerId);
-  if (activeTouches.size) return;
-  clearHold();
-  lastTouchInteraction = performance.now();
-  const dx = event.clientX - touch.x;
-  const dy = event.clientY - touch.y;
-  const distance = Math.hypot(dx, dy);
-  const fingers = touchPeak;
-  touchPeak = 0;
-  if (holdHandled) return;
-  if (fingers === 1 && distance > 42) {
-    if (Math.abs(dx) > Math.abs(dy)) {
-      runIslandGesture(dx < 0 ? "media" : "settings");
-    } else {
-      runIslandGesture(dy < 0 ? "assistant" : "hide");
-    }
-    return;
-  }
-  if (fingers === 1) runIslandGesture("assistant");
-  else if (fingers === 2) runIslandGesture("media");
-  else if (fingers === 3) runIslandGesture("system");
-  else runIslandGesture("settings");
+const gestures = new GestureController({
+  onGesture: handleGesture,
+  onPress: (target) => {
+    if (target === "nox") renderer.trigger("press");
+  },
+  onRelease: (target) => {
+    if (target === "nox") renderer.trigger("release");
+  },
 });
-
-island.addEventListener("pointercancel", () => {
-  activeTouches.clear();
-  touchPeak = 0;
-  clearHold();
-});
+const detachGestures = gestures.attach(island, gestureTarget);
 
 async function resolvePermission(decision: "allow" | "deny"): Promise<void> {
   if (!model.permissionId || !isTauriDesktop) {
@@ -369,16 +412,19 @@ async function resolvePermission(decision: "allow" | "deny"): Promise<void> {
   }
   try {
     await resolveCodexPermission(model.permissionId, decision);
-    applyModel(
+    arbiter.release("permission");
+    requestModel(
       modelForRuntimeEvent({
         type: "permission_resolved",
         sessionId: "local",
         requestId: model.permissionId,
         decision,
       }),
+      "activeAgent",
+      "permission-resolved",
     );
   } catch {
-    applyModel(modelForDemo("failure"));
+    requestModel(modelForDemo("failure"), "failure", "permission-failed");
   }
 }
 
@@ -392,7 +438,7 @@ document
       const command = button.dataset.mediaCommand as
         "previous" | "play_pause" | "next";
       void sendMediaCommand(command).catch(() =>
-        applyModel(modelForDemo("failure")),
+        requestModel(modelForDemo("failure"), "failure", "media-failed"),
       );
     });
   });
@@ -440,11 +486,15 @@ async function requestAssistant(
     throw new Error("Quick assistant is disabled in Preferences.");
   }
   const requestId = newRequestId();
-  applyModel({
-    ...modelForDemo("assistant"),
-    assistantText: "Sending to the local Codex bridge…",
-    assistantBusy: true,
-  });
+  requestModel(
+    {
+      ...modelForDemo("assistant"),
+      assistantText: "Sending to the local Codex bridge…",
+      assistantBusy: true,
+    },
+    "activeAgent",
+    "assistant-request",
+  );
   await requestQuickAssistant(requestId, prompt, {
     sessionId: activeSessionId,
     filePath,
@@ -519,14 +569,18 @@ assistantForm.addEventListener("submit", (event) => {
   const prompt = assistantPrompt.value.trim();
   if (!prompt) return;
   void requestAssistant(prompt, activeFile?.path).catch((error: unknown) => {
-    applyModel({
-      ...modelForDemo("assistant"),
-      assistantText:
-        error instanceof Error
-          ? error.message
-          : "The local bridge is unavailable.",
-      assistantBusy: false,
-    });
+    requestModel(
+      {
+        ...modelForDemo("assistant"),
+        assistantText:
+          error instanceof Error
+            ? error.message
+            : "The local bridge is unavailable.",
+        assistantBusy: false,
+      },
+      "activeAgent",
+      "assistant-result",
+    );
   });
 });
 
@@ -560,10 +614,19 @@ if (isTauriDesktop) {
   });
 }
 
-window.addEventListener("beforeunload", () => renderer.destroy(), {
-  once: true,
-});
-applyModel(model);
+window.addEventListener(
+  "beforeunload",
+  () => {
+    detachGestures();
+    window.clearTimeout(hoverTimer);
+    window.clearTimeout(collapseTimer);
+    renderer.destroy();
+  },
+  {
+    once: true,
+  },
+);
+applyModelDirect(model);
 void subscribeRuntimeEvents((event) => {
   if ("sessionId" in event) activeSessionId = event.sessionId;
   if (event.type === "file_read" || event.type === "file_edit") {
@@ -574,5 +637,10 @@ void subscribeRuntimeEvents((event) => {
       path: event.path,
     };
   }
-  applyModel(modelForRuntimeEvent(event));
+  if (event.type === "permission_resolved") arbiter.release("permission");
+  requestModel(
+    modelForRuntimeEvent(event),
+    priorityForRuntimeEvent(event),
+    `runtime-${event.type}`,
+  );
 });

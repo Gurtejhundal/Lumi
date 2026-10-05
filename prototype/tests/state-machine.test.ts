@@ -5,7 +5,7 @@ import {
   modelForRuntimeEvent,
 } from "../src/state-machine";
 
-describe("Phase 0 island state models", () => {
+describe("island state models", () => {
   it("keeps a permission request modal and non-dismissible", () => {
     const model = modelForDemo("permission");
     expect(model.surface).toBe("modal");
@@ -32,6 +32,11 @@ describe("Phase 0 island state models", () => {
     expect(modelForDemo("peek").surface).toBe("peek");
   });
 
+  it("rests in the Nox-only petit surface before compact home", () => {
+    expect(modelForDemo("idle").surface).toBe("petit");
+    expect(modelForDemo("home").surface).toBe("compact");
+  });
+
   it("keeps a real Codex request open with its request ID", () => {
     const model = modelForRuntimeEvent({
       type: "permission_requested",
@@ -43,7 +48,7 @@ describe("Phase 0 island state models", () => {
     expect(canDismiss(model)).toBe(false);
   });
 
-  it("maps actual media metadata to controls without a synthetic progress value", () => {
+  it("keeps actual media compact until the user explicitly expands it", () => {
     const model = modelForRuntimeEvent({
       type: "media",
       player: "Spotify",
@@ -51,7 +56,8 @@ describe("Phase 0 island state models", () => {
       artist: "An artist",
       playback: "playing",
     });
-    expect(model.showMediaControls).toBe(true);
+    expect(model.surface).toBe("compact");
+    expect(model.showMediaControls).toBe(false);
     expect(model.headline).toBe("A track");
     expect(model.detail).toBe("An artist");
   });

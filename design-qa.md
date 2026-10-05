@@ -7,10 +7,9 @@
 - Requested design decision: remove that board and expose every primary action
   through the top-center island only.
 - Implementation evidence: browser-rendered capture of
-  `http://127.0.0.1:4173/` in the Codex in-app Browser on 2026-10-05
-  (1067 × 900 px, default compact state). The browser capture is retained in
-  the task transcript; no filesystem screenshot export is available from this
-  browser surface.
+  `http://127.0.0.1:4173/` in the Codex in-app Browser on 2026-10-05.
+  Native Wayland validation remains outstanding; a browser capture cannot
+  validate native window geometry, focus, or input passthrough.
 - Normalization: comparison is intentional behavior redesign rather than
   pixel-for-pixel equivalence. The source board is evaluated as a removed
   development-only surface; the island's dark material, compact top-center
@@ -18,15 +17,13 @@
 
 ## States and interactions tested
 
-- Normal URL: one compact top-center island and no visible developer board.
-- Single click/tap on Nox: local Quick Assistant panel.
-- Double-click on Nox: media panel with playback controls.
-- Reduced-motion, keyboard focusable controls, semantic form labels, and
-  compact clipping at the default desktop viewport were reviewed.
+- Browser preview: one petit, Nox-only top-center island and no visible
+  developer board.
+- The native gesture, focus, and Wayland input-boundary checks have not run.
 
 ## Findings
 
-No actionable P0, P1, or P2 findings.
+Native review is blocked, so this document does not record a passing QA result.
 
 - Intentional difference — the former state board is hidden unless the preview
   URL explicitly includes `?demo=1`. This is the requested one-popup model.
@@ -43,12 +40,13 @@ No actionable P0, P1, or P2 findings.
 - Copy: the preference panel contains the interaction map rather than placing
   permanent instructions outside the island.
 
-## Follow-up polish
+## Validation required before sign-off
 
-- P3: test direct touchscreen hardware for two-, three-, and four-touch input
-  once the native Tauri shell can be compiled.
-- P3: a GNOME-specific bridge can be evaluated later if system-wide trackpad
-  gesture capture is essential; Mutter does not expose those gestures to a
-  normal Wayland client.
+- Build and launch the Tauri shell on Ubuntu GNOME Wayland.
+- Verify each native backing-window size, passive focus behavior, and that
+  surrounding desktop content remains clickable.
+- Test direct touchscreen hardware for multi-touch centroid gestures. GNOME
+  owns global trackpad gestures, so they are intentionally out of scope for a
+  normal Tauri client.
 
-final result: passed
+final result: blocked — native Tauri/Cargo validation is unavailable in this environment.

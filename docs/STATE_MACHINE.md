@@ -5,6 +5,7 @@
 ```text
 HIDDEN
   -> PEEK
+  -> PETIT
   -> COMPACT
   -> EXPANDED
   -> MODAL
@@ -33,6 +34,7 @@ TIMER
 ## Transition rules
 
 ### HIDDEN
+
 - no visible UI
 - top-edge sensor active
 - expensive rendering paused
@@ -44,26 +46,35 @@ On priority event:
 `HIDDEN -> COMPACT` or `MODAL`
 
 ### PEEK
+
 - minimal visual acknowledgement
 - no text unless needed
 
 Pointer remains > 160 ms:
-`PEEK -> COMPACT`
+`PEEK -> PETIT`
 
 Pointer leaves:
 `PEEK -> HIDDEN`
 
+### PETIT
+
+- Nox-only resting surface
+- hovering Nox for 160–200 ms reveals compact home
+- no text or background panel competes for attention
+
 ### COMPACT
+
 - primary working state
 - one-line information
 
-Click:
+Tap island body:
 `COMPACT -> EXPANDED`
 
 Priority permission:
 `COMPACT -> MODAL`
 
 ### EXPANDED
+
 - rich content / controls
 - optional quick prompt
 - can accept file drop
@@ -75,7 +86,9 @@ Inactivity:
 `EXPANDED -> COMPACT -> HIDDEN`
 
 ### MODAL
+
 Used only for:
+
 - permission decision
 - destructive confirmation
 - security warning
@@ -89,7 +102,7 @@ When multiple events arrive, compare priority.
 Example:
 
 ```text
-privacy > permission > failure > file-drop > agent > HUD > media > hover
+permission > privacy > file-drop > failure > agent > system HUD > media > hover > idle
 ```
 
 Lower-priority events queue briefly or are discarded if stale.

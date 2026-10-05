@@ -86,8 +86,8 @@ button {
 }
 
 .island {
-  --island-width: 164px;
-  --island-height: 42px;
+  --island-width: 180px;
+  --island-height: 48px;
   --island-radius: 0 0 22px 22px;
   --island-y: 0px;
   --surface-opacity: 1;
@@ -195,19 +195,25 @@ button {
 }
 
 .island[data-surface="compact"] {
-  --island-width: 164px;
-  --island-height: 42px;
+  --island-width: 180px;
+  --island-height: 48px;
   --island-radius: 0 0 22px 22px;
 }
 
+.island[data-surface="petit"] {
+  --island-width: 100px;
+  --island-height: 28px;
+  --island-radius: 0 0 15px 15px;
+}
+
 .island[data-surface="expanded"] {
-  --island-width: 392px;
-  --island-height: 166px;
+  --island-width: 390px;
+  --island-height: 180px;
   --island-radius: 0 0 31px 31px;
 }
 
 .island[data-surface="modal"] {
-  --island-width: 432px;
+  --island-width: 430px;
   --island-height: 250px;
   --island-radius: 0 0 32px 32px;
 }
@@ -248,6 +254,11 @@ button {
   transition:
     transform 230ms ease,
     opacity 180ms ease;
+}
+
+.island[data-surface="expanded"] .island-content,
+.island[data-surface="modal"] .island-content {
+  transition-delay: 55ms;
 }
 
 .artwork {
@@ -591,6 +602,7 @@ button {
 .island[data-surface="compact"] .action-status,
 .island[data-surface="compact"] .assistant-form,
 .island[data-surface="compact"] .settings-panel,
+.island[data-surface="petit"] .island-content,
 .island[data-surface="peek"] .island-content,
 .island[data-surface="peek"] .nox-stage,
 .island[data-surface="hidden"] .island-content,
@@ -600,6 +612,13 @@ button {
 
 .island[data-surface="compact"] .headline {
   font-size: 12.2px;
+}
+
+.island[data-surface="petit"] .nox-stage {
+  flex-basis: 68px;
+  width: 68px;
+  height: 32px;
+  margin: -2px auto 0;
 }
 
 .island[data-surface="expanded"] .nox-stage,

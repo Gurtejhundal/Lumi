@@ -4,7 +4,7 @@ mod mpris;
 mod system_hud;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, PhysicalPosition, State, WebviewWindow};
+use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 use codex_socket::{AssistantBridge, PendingPermissions};
 use events::Decision;
@@ -44,23 +44,51 @@ fn center_on_primary_monitor(window: &WebviewWindow) -> tauri::Result<()> {
     window.set_position(PhysicalPosition::new(x as i32, 0))
 }
 
+fn resize_surface(window: &WebviewWindow, surface: &str) -> tauri::Result<()> {
+    let (width, height) = match surface {
+        "hidden" => (108, 12),
+        "peek" => (96, 20),
+        "petit" => (116, 38),
+        "compact" => (196, 62),
+        "expanded" => (414, 204),
+        "modal" => (452, 278),
+        _ => return Err("Unknown Lumi surface".into()),
+    };
+    window.set_size(PhysicalSize::new(width, height))?;
+    center_on_primary_monitor(window)
+}
+
 fn configure_native_window(window: &WebviewWindow) -> tauri::Result<()> {
-    center_on_primary_monitor(window)?;
+    resize_surface(window, "petit")?;
     window.set_always_on_top(true)?;
     window.set_skip_taskbar(true)?;
     window.set_visible_on_all_workspaces(true)?;
     window.set_focusable(false)?;
-    // Tauri can toggle passthrough for the entire backing window. Keep input
-    // enabled initially so the island remains usable; shaped regions are not
-    // available to an ordinary GNOME Wayland client.
+    // Mutter does not expose shaped client input regions to ordinary Wayland
+    // clients. The backing window is therefore resized to the visible island
+    // for every surface instead of leaving a 520 × 420 transparent hit area.
     window.set_ignore_cursor_events(false)
 }
 
 #[tauri::command]
-fn set_overlay_interaction(window: WebviewWindow, interactive: bool) -> Result<(), String> {
+fn set_overlay_interaction(
+    window: WebviewWindow,
+    interactive: bool,
+    focusable: bool,
+) -> Result<(), String> {
+    window.set_focusable(focusable).map_err(|error| error.to_string())?;
     window
         .set_ignore_cursor_events(!interactive)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if focusable {
+        window.set_focus().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_overlay_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
+    resize_surface(&window, &surface).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -186,6 +214,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_overlay_interaction,
+            set_overlay_surface,
             overlay_capabilities,
             resolve_codex_permission,
             media_command,

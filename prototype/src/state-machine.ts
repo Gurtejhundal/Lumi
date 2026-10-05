@@ -1,7 +1,9 @@
-export type SurfaceState = "hidden" | "peek" | "compact" | "expanded" | "modal";
+export type SurfaceState =
+  "hidden" | "peek" | "petit" | "compact" | "expanded" | "modal";
 
 export type DemoEvent =
   | "idle"
+  | "home"
   | "thinking"
   | "editing"
   | "running"
@@ -65,19 +67,27 @@ const compact = (
   accent: "neutral",
 });
 
+const petit = (): IslandModel => ({
+  ...compact("idle", ""),
+  surface: "petit",
+  emotion: "neutral",
+});
+
 export function modelForDemo(
   event: DemoEvent | "hidden" | "peek",
 ): IslandModel {
   switch (event) {
     case "hidden":
-      return { ...compact("idle", "Ready"), surface: "hidden" };
+      return { ...petit(), surface: "hidden" };
     case "peek":
-      return { ...compact("idle", "Ready"), surface: "peek" };
+      return { ...petit(), surface: "peek" };
     case "idle":
-      return compact("idle", "Ready when you are");
+      return petit();
+    case "home":
+      return compact("home", "Nox is here", "curious");
     case "thinking":
       return {
-        surface: "expanded",
+        surface: "compact",
         event,
         emotion: "working",
         eyebrow: "Codex",
@@ -91,7 +101,7 @@ export function modelForDemo(
       };
     case "editing":
       return {
-        surface: "expanded",
+        surface: "compact",
         event,
         emotion: "working",
         eyebrow: "Codex",
@@ -105,7 +115,7 @@ export function modelForDemo(
       };
     case "running":
       return {
-        surface: "expanded",
+        surface: "compact",
         event,
         emotion: "working",
         eyebrow: "Codex",
@@ -307,7 +317,7 @@ export function modelForRuntimeEvent(event: RuntimeEvent): IslandModel {
       );
     case "thinking":
       return {
-        surface: "expanded",
+        surface: "compact",
         event: "thinking",
         emotion: "working",
         eyebrow: "Codex",
@@ -321,7 +331,7 @@ export function modelForRuntimeEvent(event: RuntimeEvent): IslandModel {
       };
     case "file_read":
       return {
-        surface: "expanded",
+        surface: "compact",
         event: "editing",
         emotion: "working",
         eyebrow: "Codex",
@@ -335,7 +345,7 @@ export function modelForRuntimeEvent(event: RuntimeEvent): IslandModel {
       };
     case "file_edit":
       return {
-        surface: "expanded",
+        surface: "compact",
         event: "editing",
         emotion: "working",
         eyebrow: "Codex",
@@ -349,7 +359,7 @@ export function modelForRuntimeEvent(event: RuntimeEvent): IslandModel {
       };
     case "command_started":
       return {
-        surface: "expanded",
+        surface: "compact",
         event: "running",
         emotion: "working",
         eyebrow: "Codex",
@@ -438,17 +448,15 @@ export function modelForRuntimeEvent(event: RuntimeEvent): IslandModel {
       );
     case "media":
       return {
-        surface: "expanded",
-        event: "media",
-        emotion: event.playback === "playing" ? "working" : "neutral",
+        ...compactRuntime(
+          event,
+          event.title,
+          event.playback === "playing" ? "working" : "neutral",
+          "blue",
+        ),
         eyebrow: event.player,
-        headline: event.title,
         detail: event.artist ?? "Unknown artist",
-        showPermission: false,
-        showFile: false,
-        showMediaControls: true,
         artUrl: event.artUrl,
-        accent: "blue",
       };
     case "assistant_status":
       return {

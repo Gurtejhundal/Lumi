@@ -1,3 +1,5 @@
+import type { SurfaceState } from "./state-machine";
+
 export interface OverlayCapabilities {
   session: "wayland" | "x11" | "unknown";
   placement: "native-window-fallback";
@@ -28,10 +30,17 @@ export async function configureNativeOverlay(): Promise<OverlayCapabilities | nu
  */
 export async function setNativeInteraction(
   interactive: boolean,
+  focusable = false,
 ): Promise<void> {
   if (!isTauriDesktop) return;
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("set_overlay_interaction", { interactive });
+  await invoke("set_overlay_interaction", { interactive, focusable });
+}
+
+export async function setNativeSurface(surface: SurfaceState): Promise<void> {
+  if (!isTauriDesktop) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_overlay_surface", { surface });
 }
 
 export async function setAutostart(enabled: boolean): Promise<void> {

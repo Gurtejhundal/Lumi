@@ -23,24 +23,15 @@ export async function configureNativeOverlay(): Promise<OverlayCapabilities | nu
   return invoke<OverlayCapabilities>("overlay_capabilities");
 }
 
-/**
- * Tauri only exposes whole-window cursor passthrough. The frontend uses this
- * during passive states; precise, island-shaped input regions need a native
- * compositor integration and are intentionally not faked here.
- */
-export async function setNativeInteraction(
+/** A complete overlay transition is one native IPC operation, never two races. */
+export async function setNativeOverlayState(
+  surface: SurfaceState,
   interactive: boolean,
   focusable = false,
 ): Promise<void> {
   if (!isTauriDesktop) return;
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("set_overlay_interaction", { interactive, focusable });
-}
-
-export async function setNativeSurface(surface: SurfaceState): Promise<void> {
-  if (!isTauriDesktop) return;
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("set_overlay_surface", { surface });
+  await invoke("set_overlay_state", { surface, interactive, focusable });
 }
 
 export async function setAutostart(enabled: boolean): Promise<void> {

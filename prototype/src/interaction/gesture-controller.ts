@@ -176,7 +176,9 @@ export class GestureController {
 
   public pointerCancel(pointerId: number): void {
     if (!this.active.has(pointerId)) return;
-    this.active.clear();
+    this.active.delete(pointerId);
+    this.maxTouchCount = this.active.size;
+    if (this.active.size) return;
     this.cancelLongPress();
     this.finished.length = 0;
     this.sessionConsumed = true;

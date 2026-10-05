@@ -111,13 +111,17 @@ describe("GestureController", () => {
     ]);
   });
 
-  it("cancels the whole active session and ignores controls", () => {
+  it("cancels only the relevant pointer and ignores controls", () => {
     const events: Gesture[] = [];
     const gestures = controller(events);
     gestures.pointerDown(input(1, 0, 0, 0));
+    gestures.pointerDown(input(2, 20, 0, 0));
     gestures.pointerCancel(1);
-    gestures.pointerDown(input(2, 0, 0, 20, "control"));
-    gestures.pointerUp(input(2, 0, 0, 40, "control"));
-    expect(events).toEqual([]);
+    gestures.pointerUp(input(2, 80, 0, 100));
+    gestures.pointerDown(input(3, 0, 0, 120, "control"));
+    gestures.pointerUp(input(3, 0, 0, 140, "control"));
+    expect(events).toEqual([
+      { kind: "swipe", direction: "right", velocity: expect.any(Number) },
+    ]);
   });
 });

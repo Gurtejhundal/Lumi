@@ -635,7 +635,8 @@ button {
 }
 
 .island[data-surface="hidden"] .island-sensor {
-  height: 16px;
+  width: 100px;
+  height: 12px;
 }
 
 .island[data-event="failure"] .island-surface {

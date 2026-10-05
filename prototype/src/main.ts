@@ -9,8 +9,7 @@ import {
   resolveCodexPermission,
   sendMediaCommand,
   setAutostart,
-  setNativeInteraction,
-  setNativeSurface,
+  setNativeOverlayState,
   subscribeRuntimeEvents,
   subscribeWindowFileDrops,
 } from "./desktop";
@@ -22,6 +21,7 @@ import {
 } from "./interaction/gesture-controller";
 import {
   InteractionArbiter,
+  type InteractionKind,
   type InteractionPriorityName,
   priorityForRuntimeEvent,
 } from "./interaction/interaction-arbiter";
@@ -78,6 +78,8 @@ let isReducedMotion = window.matchMedia(
 let activeSessionId: string | undefined;
 let activeFile:
   { name: string; type: string; size: number; path?: string } | undefined;
+let nativeTransition = Promise.resolve();
+let nativeTransitionVersion = 0;
 
 const preferenceKey = "nox-island-preferences";
 const preferences = {
@@ -153,33 +155,63 @@ function applyModelDirect(next: IslandModel): void {
     if (next.event === "file") renderer.trigger("fileCatch");
   }
   if (isTauriDesktop) {
-    const focusable = Boolean(next.showAssistant || next.showSettings);
-    const interactive = next.surface !== "hidden" && next.surface !== "peek";
-    void setNativeSurface(next.surface);
-    void setNativeInteraction(interactive, focusable);
-    if (next.showAssistant) window.setTimeout(() => assistantPrompt.focus(), 0);
+    queueNativeOverlay(next.surface, true, false);
   }
 }
 
-const arbiter = new InteractionArbiter({ apply: applyModelDirect });
+function queueNativeOverlay(
+  surface: IslandModel["surface"],
+  interactive: boolean,
+  focusable: boolean,
+): void {
+  const version = ++nativeTransitionVersion;
+  nativeTransition = nativeTransition
+    .catch(() => undefined)
+    .then(async () => {
+      if (version !== nativeTransitionVersion) return;
+      await setNativeOverlayState(surface, interactive, focusable);
+    })
+    .catch(() => {
+      document.documentElement.dataset.nativeOverlay = "unavailable";
+    });
+}
+
+function activateNativeInput(): void {
+  if (isTauriDesktop) queueNativeOverlay(model.surface, true, true);
+}
+
+const arbiter = new InteractionArbiter({
+  apply: applyModelDirect,
+  fallback: () => modelForDemo("idle"),
+});
+
+interface RequestOptions {
+  kind?: InteractionKind;
+  ownerKey?: string;
+  locks?: boolean;
+  expiresAfterMs?: number;
+  navigation?: boolean;
+}
 
 function requestModel(
   next: IslandModel,
   priority: InteractionPriorityName = "idle",
   id: string = next.event,
+  options: RequestOptions = {},
 ): void {
-  arbiter.dispatch({
+  const intent = {
     id,
     model: next,
     priority,
-    locks:
-      priority === "permission" ||
-      priority === "privacy" ||
-      priority === "fileDrop" ||
-      priority === "failure",
+    kind: options.kind,
+    ownerKey: options.ownerKey,
+    locks: options.locks ?? false,
     expiresAfterMs:
-      priority === "systemHud" || priority === "media" ? 1200 : undefined,
-  });
+      options.expiresAfterMs ??
+      (priority === "systemHud" || priority === "media" ? 1200 : undefined),
+  };
+  if (options.navigation) arbiter.navigate(intent);
+  else arbiter.dispatch(intent);
 }
 
 function priorityForDemoEvent(
@@ -213,11 +245,27 @@ function priorityForDemoEvent(
 
 function show(event: DemoEvent | "hidden" | "peek"): void {
   window.clearTimeout(hoverTimer);
-  requestModel(
-    modelForDemo(event),
-    priorityForDemoEvent(event),
-    `demo-${event}`,
-  );
+  const next = modelForDemo(event);
+  const priority = priorityForDemoEvent(event);
+  requestModel(next, priority, `demo-${event}`, {
+    kind:
+      priority === "permission"
+        ? "permission"
+        : priority === "fileDrop"
+          ? "fileDrop"
+          : priority === "failure"
+            ? "failure"
+            : undefined,
+    ownerKey: priority === "permission" ? next.permissionId : undefined,
+    locks: priority === "permission",
+    expiresAfterMs:
+      priority === "fileDrop"
+        ? 3500
+        : priority === "failure"
+          ? 2800
+          : undefined,
+    navigation: true,
+  });
 }
 
 function revealFromEdge(): void {
@@ -242,7 +290,10 @@ function updateFileCard(): void {
   fileInfo.textContent = `${activeFile.type} · ${formatBytes(activeFile.size)}`;
   fileActions.hidden = false;
   fileActionStatus.hidden = true;
-  requestModel({ ...model, showFileActions: true }, "fileDrop", "active-file");
+  requestModel({ ...model, showFileActions: true }, "fileDrop", "demo-file", {
+    kind: "fileDrop",
+    expiresAfterMs: 3500,
+  });
 }
 
 function setFileActionStatus(message: string): void {
@@ -405,26 +456,38 @@ const gestures = new GestureController({
 });
 const detachGestures = gestures.attach(island, gestureTarget);
 
+island.addEventListener("pointerdown", (event) => {
+  if (gestureTarget(event.target) === "control") activateNativeInput();
+});
+island.addEventListener("focusin", activateNativeInput);
+
 async function resolvePermission(decision: "allow" | "deny"): Promise<void> {
   if (!model.permissionId || !isTauriDesktop) {
+    if (model.permissionId) {
+      arbiter.releaseByKind("permission", model.permissionId);
+    }
     show(decision === "allow" ? "success" : "idle");
     return;
   }
   try {
-    await resolveCodexPermission(model.permissionId, decision);
-    arbiter.release("permission");
+    const permissionId = model.permissionId;
+    await resolveCodexPermission(permissionId, decision);
+    arbiter.releaseByKind("permission", permissionId);
     requestModel(
       modelForRuntimeEvent({
         type: "permission_resolved",
         sessionId: "local",
-        requestId: model.permissionId,
+        requestId: permissionId,
         decision,
       }),
       "activeAgent",
       "permission-resolved",
     );
   } catch {
-    requestModel(modelForDemo("failure"), "failure", "permission-failed");
+    requestModel(modelForDemo("failure"), "failure", "permission-failed", {
+      kind: "failure",
+      expiresAfterMs: 2800,
+    });
   }
 }
 
@@ -438,7 +501,10 @@ document
       const command = button.dataset.mediaCommand as
         "previous" | "play_pause" | "next";
       void sendMediaCommand(command).catch(() =>
-        requestModel(modelForDemo("failure"), "failure", "media-failed"),
+        requestModel(modelForDemo("failure"), "failure", "media-failed", {
+          kind: "failure",
+          expiresAfterMs: 2800,
+        }),
       );
     });
   });
@@ -447,6 +513,7 @@ document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     show("assistant");
+    activateNativeInput();
     window.setTimeout(() => assistantPrompt.focus(), 0);
     return;
   }
@@ -494,6 +561,7 @@ async function requestAssistant(
     },
     "activeAgent",
     "assistant-request",
+    { navigation: true },
   );
   await requestQuickAssistant(requestId, prompt, {
     sessionId: activeSessionId,
@@ -580,6 +648,7 @@ assistantForm.addEventListener("submit", (event) => {
       },
       "activeAgent",
       "assistant-result",
+      { navigation: true },
     );
   });
 });
@@ -620,6 +689,7 @@ window.addEventListener(
     detachGestures();
     window.clearTimeout(hoverTimer);
     window.clearTimeout(collapseTimer);
+    arbiter.destroy();
     renderer.destroy();
   },
   {
@@ -637,10 +707,34 @@ void subscribeRuntimeEvents((event) => {
       path: event.path,
     };
   }
-  if (event.type === "permission_resolved") arbiter.release("permission");
+  if (event.type === "permission_resolved") {
+    arbiter.releaseByKind("permission", event.requestId);
+  }
+  if (event.type === "privacy" && !event.active) {
+    arbiter.releaseByKind("privacy", event.kind);
+  }
+  const priority = priorityForRuntimeEvent(event);
+  const isPermission = event.type === "permission_requested";
+  const isActivePrivacy = event.type === "privacy" && event.active;
   requestModel(
     modelForRuntimeEvent(event),
-    priorityForRuntimeEvent(event),
-    `runtime-${event.type}`,
+    priority,
+    isPermission ? `permission:${event.requestId}` : `runtime-${event.type}`,
+    {
+      kind: isPermission
+        ? "permission"
+        : isActivePrivacy
+          ? "privacy"
+          : priority === "failure"
+            ? "failure"
+            : undefined,
+      ownerKey: isPermission
+        ? event.requestId
+        : isActivePrivacy
+          ? event.kind
+          : undefined,
+      locks: isPermission || isActivePrivacy,
+      expiresAfterMs: priority === "failure" ? 2800 : undefined,
+    },
   );
 });

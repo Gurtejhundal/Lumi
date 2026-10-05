@@ -6,7 +6,7 @@ This directory hosts the Tauri 2 / Rust shell for Nox Island. It opens one trans
 
 GNOME/Mutter does not provide the `wlr-layer-shell` protocol to normal third-party clients. Therefore no non-extension Tauri application can honestly promise panel-level anchoring or island-shaped input passthrough on GNOME Wayland.
 
-The portable native-window fallback deliberately resizes the entire backing window for each visible surface rather than keeping a large transparent rectangle. `set_overlay_interaction` controls whole-window passthrough and focusability: passive states neither focus nor intercept desktop input, while text-entry states temporarily become focusable and focus their input. This is a pragmatic tradeoff, not shaped per-pixel input. A later optional, narrowly scoped GNOME bridge could provide compositor-level behavior without making the product itself a Shell extension.
+The portable native-window fallback deliberately resizes the entire backing window for each visible surface rather than keeping a large transparent rectangle. `set_overlay_state` applies resize, centring, focusability, cursor passthrough, and any explicit focus request as one ordered native transition. Hidden mode remains only a tiny interactive top-edge sensor, so it remains discoverable without a large invisible hitbox. The overlay never takes focus merely because a permission appears; a click or keyboard command explicitly activates an input control. This is a pragmatic tradeoff, not shaped per-pixel input. A later optional, narrowly scoped GNOME bridge could provide compositor-level behavior without making the product itself a Shell extension.
 
 ## File drop and quick assistant
 

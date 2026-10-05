@@ -13,11 +13,14 @@ export const InteractionPriority = {
 } as const;
 
 export type InteractionPriorityName = keyof typeof InteractionPriority;
+export type InteractionKind = "permission" | "privacy" | "fileDrop" | "failure";
 
 export interface ArbitrationIntent {
   id: string;
   model: IslandModel;
   priority: InteractionPriorityName;
+  kind?: InteractionKind;
+  ownerKey?: string;
   createdAt?: number;
   expiresAfterMs?: number;
   locks?: boolean;
@@ -25,11 +28,13 @@ export interface ArbitrationIntent {
 
 export interface InteractionArbiterOptions {
   apply: (model: IslandModel) => void;
+  fallback: () => IslandModel;
   now?: () => number;
 }
 
 interface ActiveIntent extends ArbitrationIntent {
   createdAt: number;
+  returnTo?: ActiveIntent;
 }
 
 export function priorityForRuntimeEvent(
@@ -39,7 +44,7 @@ export function priorityForRuntimeEvent(
     case "permission_requested":
       return "permission";
     case "privacy":
-      return "privacy";
+      return event.active ? "privacy" : "systemHud";
     case "file_read":
     case "file_edit":
       return "activeAgent";
@@ -67,12 +72,14 @@ export function priorityForRuntimeEvent(
 }
 
 /**
- * Centralizes visual ownership. High-priority cards are locks, never something
- * a lower-priority gesture or late desktop signal may paint over.
+ * Keeps a single visual owner. Background events obey priority; explicit user
+ * navigation is separate and cannot dismiss a hard permission/privacy lock.
+ * Transient owners return to the last meaningful state on expiry.
  */
 export class InteractionArbiter {
   private readonly now: () => number;
   private active: ActiveIntent | undefined;
+  private expiryTimer: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(private readonly options: InteractionArbiterOptions) {
     this.now = options.now ?? (() => performance.now());
@@ -81,41 +88,41 @@ export class InteractionArbiter {
   public dispatch(intent: ArbitrationIntent): boolean {
     const now = this.now();
     this.expire(now);
-    const candidate: ActiveIntent = {
-      ...intent,
-      createdAt: intent.createdAt ?? now,
-    };
-    if (
-      candidate.expiresAfterMs !== undefined &&
-      now - candidate.createdAt > candidate.expiresAfterMs
-    ) {
-      return false;
-    }
+    const candidate = this.candidate(intent, now);
+    if (this.isStale(candidate, now)) return false;
     if (
       this.active &&
-      this.active.locks &&
       InteractionPriority[candidate.priority] <
         InteractionPriority[this.active.priority]
     ) {
-      // HUDs are intentionally dropped rather than resurfacing after the
-      // meaningful interaction that obscured them has already finished.
       return false;
     }
-    if (
-      !this.active ||
-      candidate.locks ||
-      !this.active.locks ||
-      InteractionPriority[candidate.priority] >=
-        InteractionPriority[this.active.priority]
-    ) {
-      this.active = candidate;
-    }
-    this.options.apply(candidate.model);
+    this.activate(candidate);
     return true;
   }
 
-  public release(id: string): void {
-    if (this.active?.id === id) this.active = undefined;
+  /** Explicit navigation has user intent, but never bypasses a hard lock. */
+  public navigate(intent: ArbitrationIntent): boolean {
+    const now = this.now();
+    this.expire(now);
+    if (this.active?.locks) return false;
+    const candidate = this.candidate(intent, now);
+    if (this.isStale(candidate, now)) return false;
+    this.activate(candidate);
+    return true;
+  }
+
+  public releaseByKind(kind: InteractionKind, ownerKey?: string): boolean {
+    if (
+      !this.active ||
+      this.active.kind !== kind ||
+      (ownerKey !== undefined && this.active.ownerKey !== ownerKey)
+    ) {
+      return false;
+    }
+    this.clearExpiryTimer();
+    this.active = undefined;
+    return true;
   }
 
   public isBlocked(priority: InteractionPriorityName): boolean {
@@ -126,17 +133,65 @@ export class InteractionArbiter {
     );
   }
 
-  public current(): ActiveIntent | undefined {
+  public current(): Readonly<ActiveIntent> | undefined {
     this.expire(this.now());
     return this.active;
   }
 
+  public destroy(): void {
+    this.clearExpiryTimer();
+    this.active = undefined;
+  }
+
+  private candidate(intent: ArbitrationIntent, now: number): ActiveIntent {
+    return { ...intent, createdAt: intent.createdAt ?? now };
+  }
+
+  private isStale(intent: ActiveIntent, now: number): boolean {
+    return (
+      intent.expiresAfterMs !== undefined &&
+      now - intent.createdAt >= intent.expiresAfterMs
+    );
+  }
+
+  private activate(candidate: ActiveIntent): void {
+    const previous = this.active;
+    candidate.returnTo =
+      candidate.expiresAfterMs !== undefined
+        ? previous?.id === candidate.id
+          ? previous.returnTo
+          : previous
+        : undefined;
+    this.active = candidate;
+    this.scheduleExpiry(candidate);
+    this.options.apply(candidate.model);
+  }
+
+  private scheduleExpiry(intent: ActiveIntent): void {
+    this.clearExpiryTimer();
+    if (intent.expiresAfterMs === undefined) return;
+    const elapsed = this.now() - intent.createdAt;
+    this.expiryTimer = setTimeout(
+      () => this.expire(this.now()),
+      Math.max(0, intent.expiresAfterMs - elapsed),
+    );
+  }
+
+  private clearExpiryTimer(): void {
+    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    this.expiryTimer = undefined;
+  }
+
   private expire(now: number): void {
-    if (
-      this.active?.expiresAfterMs !== undefined &&
-      now - this.active.createdAt > this.active.expiresAfterMs
-    ) {
-      this.active = undefined;
+    if (!this.active || !this.isStale(this.active, now)) return;
+    const expired = this.active;
+    this.clearExpiryTimer();
+    this.active = expired.returnTo;
+    if (this.active) {
+      this.scheduleExpiry(this.active);
+      this.options.apply(this.active.model);
+    } else {
+      this.options.apply(this.options.fallback());
     }
   }
 }

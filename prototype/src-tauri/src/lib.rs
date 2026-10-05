@@ -4,7 +4,7 @@ mod mpris;
 mod system_hud;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
+use tauri::{LogicalSize, Manager, PhysicalPosition, State, WebviewWindow};
 
 use codex_socket::{AssistantBridge, PendingPermissions};
 use events::Decision;
@@ -44,38 +44,48 @@ fn center_on_primary_monitor(window: &WebviewWindow) -> tauri::Result<()> {
     window.set_position(PhysicalPosition::new(x as i32, 0))
 }
 
-fn resize_surface(window: &WebviewWindow, surface: &str) -> tauri::Result<()> {
+fn surface_size(surface: &str) -> Option<LogicalSize<f64>> {
     let (width, height) = match surface {
-        "hidden" => (108, 12),
-        "peek" => (96, 20),
-        "petit" => (116, 38),
-        "compact" => (196, 62),
-        "expanded" => (414, 204),
-        "modal" => (452, 278),
-        _ => return Err("Unknown Lumi surface".into()),
+        "hidden" => (108.0, 12.0),
+        "peek" => (96.0, 20.0),
+        "petit" => (116.0, 38.0),
+        "compact" => (196.0, 62.0),
+        "expanded" => (414.0, 204.0),
+        "modal" => (452.0, 278.0),
+        _ => return None,
     };
-    window.set_size(PhysicalSize::new(width, height))?;
-    center_on_primary_monitor(window)
+    Some(LogicalSize::new(width, height))
+}
+
+fn resize_surface(window: &WebviewWindow, surface: &str) -> Result<(), String> {
+    let size = surface_size(surface).ok_or("Unknown Lumi surface")?;
+    window.set_size(size).map_err(|error| error.to_string())?;
+    center_on_primary_monitor(window).map_err(|error| error.to_string())
 }
 
 fn configure_native_window(window: &WebviewWindow) -> tauri::Result<()> {
-    resize_surface(window, "petit")?;
     window.set_always_on_top(true)?;
     window.set_skip_taskbar(true)?;
     window.set_visible_on_all_workspaces(true)?;
-    window.set_focusable(false)?;
     // Mutter does not expose shaped client input regions to ordinary Wayland
-    // clients. The backing window is therefore resized to the visible island
-    // for every surface instead of leaving a 520 × 420 transparent hit area.
+    // clients. The backing window is therefore resized to the visible island,
+    // while HIDDEN remains only a tiny, interactive top-edge hover sensor.
+    window.set_size(LogicalSize::new(116.0, 38.0))?;
+    center_on_primary_monitor(window)?;
+    window.set_focusable(false)?;
     window.set_ignore_cursor_events(false)
 }
 
 #[tauri::command]
-fn set_overlay_interaction(
+fn set_overlay_state(
     window: WebviewWindow,
+    surface: String,
     interactive: bool,
     focusable: bool,
 ) -> Result<(), String> {
+    // Keep this order atomic within one command: geometry first, then input
+    // policy, then the explicit-focus request.
+    resize_surface(&window, &surface)?;
     window.set_focusable(focusable).map_err(|error| error.to_string())?;
     window
         .set_ignore_cursor_events(!interactive)
@@ -84,11 +94,6 @@ fn set_overlay_interaction(
         window.set_focus().map_err(|error| error.to_string())?;
     }
     Ok(())
-}
-
-#[tauri::command]
-fn set_overlay_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
-    resize_surface(&window, &surface).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -213,8 +218,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            set_overlay_interaction,
-            set_overlay_surface,
+            set_overlay_state,
             overlay_capabilities,
             resolve_codex_permission,
             media_command,
@@ -224,4 +228,19 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nox Island");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::surface_size;
+
+    #[test]
+    fn surfaces_keep_logical_design_dimensions_at_fractional_scales() {
+        let petit = surface_size("petit").expect("known surface");
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let physical = petit.to_physical::<u32>(scale);
+            assert_eq!(physical.width, (116.0 * scale).round() as u32);
+            assert_eq!(physical.height, (38.0 * scale).round() as u32);
+        }
+    }
 }
